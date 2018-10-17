@@ -1,0 +1,166 @@
+//TODO efficient circular val[prmoises]
+
+module map_reduce;
+
+import * from Streams
+
+fimport getNumCapabilities from Control.Concurrent;
+fimport unsafePerformIO from System.IO.Unsafe;
+
+// the immutable-array operations
+fimport IOVector from Data.Vector.Mutable;
+fimport fromList from Data.Vector;
+fimport indexM from Data.Vector;
+
+// The mutable-array operations
+fimport unsafeNew from Data.Vector.Mutable;
+fimport read from Data.Vector.Mutable;
+fimport write from Data.Vector.Mutable;
+
+// For measuring execution time
+fimport getTime from System.Clock;
+fimport diffTimeSpec from System.Clock;
+fimport Clock from System.Clock;
+fimport TimeSpec from System.Clock;
+
+fimport quot from Prelude;
+fimport rem from Prelude;
+
+// faster integral-only division
+def Int div(Int n, Int d) = quot(n,d);
+
+// faster integral-only modulo
+def Int mod(Int n, Int d) = rem(n,d);
+
+def Int workers() = unsafePerformIO(getNumCapabilities()); 
+
+// this function is just an alias to an imported function, so it can be automatically lifted & used in the imperative world.
+def TimeSpec diff(TimeSpec a, TimeSpec b) = diffTimeSpec(a,b); 
+
+
+// a class with a streaming method stream(...) which is remotely called
+// The method returns the stream and delegates populatin it to m()
+interface ICallee {
+  Stream stream(Bool isDestr);
+}
+class Callee implements ICallee{
+// concrete use of a type, say, Int
+Stream stream(Bool isDestr){
+	Buffer b = new Cbuffer();
+	this!m(b);
+	Stream temp;
+	if (isDestr)
+		temp = new Dref(b);
+	else
+		temp = new NDref(b, 0);
+	return temp;
+}
+
+Unit m(Buffer b) 
+  {
+	Int i = 1;
+	while(i <= 1000000) {
+		b!yield(i);
+		i = i+1;
+	}
+	b!terminate(); // termination token
+  }
+}
+
+interface IProcess {
+  Pair<Int, Int> start(Stream s);
+}
+
+interface IParAvg {
+  Rat parAvg(Stream s, Int num);
+}
+
+class Process implements IProcess {
+  Pair<Int, Int> start(Stream s){
+	Stream s1 = this.mapp(True, s);
+	return this.reduce(s1);
+  }
+
+  Stream mapp(Bool isDestr, Stream s) {
+	Buffer b = new Cbuffer();
+	Fut<Unit> f = this!map2(b, s);
+	await f?;
+	Stream temp;
+	if (isDestr)
+		temp = new Dref(b);
+	else
+		temp = new NDref(b, 0);
+	return temp;
+  }
+
+  Unit map2(Buffer b, Stream s) {
+	Maybe<Int> v = Just(0);
+	Bool last = True;
+	while(last){
+		Fut<Maybe<Int>> fv = s!pull();
+		v = fv.get;
+			case (v)  {
+			Just(x) => {b!yield(x*2);}
+			Nothing => {last = False;}
+			}
+	}
+	b!terminate();
+  }
+
+  Pair<Int, Int> reduce(Stream s)
+  {
+	Maybe<Int> v = Just(0);
+	Int n = 0; Int sum = 0;
+	Bool last = True;
+	while(last){
+		Fut<Maybe<Int>> fv = s!pull();
+		v = fv.get;
+		case (v)  {
+			Just(x) => {
+				n = n + 1;
+				sum = sum + x;
+
+			}
+			Nothing => {last = False;}
+		}
+	}
+	return Pair(sum, n);
+  }
+}
+
+class ParAvg implements IParAvg {
+  Rat parAvg(Stream s, Int num) {
+	Int m = 1;
+	Int sum=0; Int avg = 0; Int n = 0;
+	Rat result = 0;
+	Fut<Pair<Int, Int>> fp;
+	List<Fut<Pair<Int, Int>>> l = Nil;
+	while(m<=num) {
+		IProcess p = new Process();
+		fp = p!start(s);
+		l = Cons(fp, l);
+		m=m+1;
+	}
+	while (l != Nil) {
+		Pair<Int, Int> pair = head(l).get;
+		case  (pair) {
+			Pair(a, b) => {
+			 sum = sum + a;
+			 n = n + b;
+			}
+		}
+		l = tail(l);
+	}
+	if (n>0) result = sum / n;
+	return result;
+  }
+}
+
+{// Main block
+	ICallee callee = new Callee();
+	Fut<Stream> fs = callee ! stream(True); // True: destructive
+	Stream s1 = fs.get;
+	IParAvg parallelAvg = new ParAvg();
+	Rat average = parallelAvg.parAvg(s1, workers()); 
+	println(toString(average));
+}

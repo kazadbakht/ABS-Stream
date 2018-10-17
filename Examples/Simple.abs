@@ -1,0 +1,77 @@
+// a class with a streaming method m(...) which is remotely called
+// the stream is non_destructive
+module Simple;
+import * from Streams;
+
+interface ICallee {
+  Stream m(Bool isDestr);
+}
+class Callee implements ICallee{
+// concrete use of a type, say, Int
+Stream m(Bool isDestr){
+	Buffer b = new Cbuffer(); // the same cog
+	this!m2(b);
+	Stream temp;
+	if (isDestr)
+		temp = new Dref(b);
+	else
+		temp = new NDref(b, 0);
+	return temp;
+}
+
+
+Unit m2(Buffer b) {
+	b!yield(1);
+	b!yield(2);
+	b!yield(3);
+	b!terminate(); // termination token
+
+}
+}
+
+interface IReader {
+	Unit reader(Stream s);
+}
+
+class Reader implements IReader {
+  Unit reader(Stream s) {
+	Fut<Maybe<Int>> fv = s!pull();
+	Maybe<Int> v = fv.get;
+	println(toString(v));
+	fv = s!pull();
+	v = fv.get;
+	println(toString(v));
+
+  }
+}
+
+
+{
+	ICallee callee = new Callee();
+	Fut<Stream> fs = callee ! m(False); // False: Non-destructive
+	Stream s1 = fs.get;
+	IReader rdr1 = new Reader();
+	IReader rdr2 = new Reader();
+	Fut<Stream> fs2 = s1!clone();
+	Stream s2 = fs2.get;
+	Fut<Unit> fu1 = rdr1!reader(s1);
+	Fut<Unit> fu2 = rdr2!reader(s2);
+	fu1.get;
+	fu2.get;
+}
+
+
+
+/*
+
+// an invocation scenario of a non-destrcutive
+Fut<Stream>  fnd = o!m(False, ...);
+Stream str = fnd.get; // str is a reference to the stream 
+Fut<Maybe<Int>> fv = str.pull();
+Maybe<Int> v = fv.get;
+if (v == Nothing)
+	//the termination statement
+else
+	//use v 
+
+*/
