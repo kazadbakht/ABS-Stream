@@ -12,72 +12,8 @@ fimport unsafeNew from Data.Vector.Mutable;
 fimport read from Data.Vector.Mutable;
 fimport write from Data.Vector.Mutable;
 
+def Int bufSize() = 1000;
 
-// QUEUE
-interface Node {
-  Fut<Maybe<Int>> getFut();
-  Unit setNext(Node next_);
-  Node getNext();
-}
-
-class CNode(Fut<Maybe<Int>> f) implements Node {
-  Node next;
-  Fut<Maybe<Int>> getFut() {
-    return f;
-  }
-  Unit setNext(Node next_) {
-    next = next_;
-  }
-  Node getNext() {
-    return next;
-  }
-}
-
-
-interface Queue {
-  Unit enque(Fut<Maybe<Int>> f);
-  Fut<Maybe<Int>> deque();
-  Bool isEmpty_();
-}
-
-class CQueue implements Queue {
-  Fut<Maybe<Int>> f;
-  Node head;
-  Node last;
-  {
-    head = null;
-    last = null;
-  }
-  Unit enque(Fut<Maybe<Int>> f) {
-    if (head == null){
-      head = new CNode(f);
-      last = head;
-    }
-    else {
-      Node next_ = new CNode(f);
-      last.setNext(next_);
-      last = next_;
-    }
-  }
-
-  Fut<Int> deque() {
-    // assume that there is something on the head
-    Node next_ = head.getNext();
-    Node temp = head;
-    if ( next_== null){
-      head = null;
-      last = null;
-    }
-    else {
-      head = next_;
-    }
-    return temp.getFut();
-  }
-
-  Bool isEmpty_() {
-    return (head==null);
-  }
-}
 
 interface Stream {
 	Stream clone();
@@ -85,13 +21,13 @@ interface Stream {
 }
 
 class NDref (Buffer b, Int cursor) implements Stream {
-Stream clone() {
+  Stream clone() {
 	Stream temp = new NDref(b, cursor);
 	return temp;
-}
+  }
 
-// sync call means async call + immediate get
-Maybe<Int> pull() {
+  // sync call means async call + immediate get
+  Maybe<Int> pull() {
 	Fut<Fut<Maybe<Int>>> f;
 	f = b!ndread(cursor); // it returns a future whether valued or not - different from null
 	Fut<Maybe<Int>> f2 = f.get;
@@ -99,22 +35,22 @@ Maybe<Int> pull() {
 	if (isJust(v))
 		cursor = cursor + 1;
 	return v;
-}
+  }
 }
 
 class Dref(Buffer b) implements Stream {
-Stream clone() {
+  Stream clone() {
 	return this;
-}
+  }
 
-
-Maybe<Int> pull() {
+// sync call means async call + immediate get
+  Maybe<Int> pull() {
 	Fut<Fut<Maybe<Int>>> f;
 	f = b!dread(); // it returns a future whether valued or not - different from null
 	Fut<Maybe<Int>> f2 = f.get;
 	Maybe<Int> v = f2.get;
 	return v;
-}
+  }
 }
 
 interface Buffer {
@@ -128,78 +64,63 @@ interface Buffer {
 
 class Cbuffer implements Buffer{
 IOVector<Fut<Maybe<Int>>> val;
-
-Queue awaited;
-Int size = 1000;
+Int size = bufSize()+1;
 Int wrt = 0;
 Int rd = 0;
-Int end = -1;
 
-{
+  {
 	// set the size of the stream buffer
 	val = unsafeNew(size);
 	Int i = 0;
 	while(i<size) {
 		Fut<Maybe<Int>> a = pro_new;
 		write(val, i, a);
-	i=i+1;
+		i=i+1;
 	} 
-	awaited = new local CQueue(); // in the same cog as the buffer
-}
+  }
 
-Fut<Maybe<Int>> ndread(Int i) {
+
+  Fut<Maybe<Int>> ndread(Int i) {
 	Fut<Maybe<Int>> f = read(val, i);
 	return f;
-}
+  }
 
-Fut<Maybe<Int>> dread() {
+  Fut<Maybe<Int>> dread() {
 	Fut<Maybe<Int>> f;
-  if (rd == wrt){ // the queue is empty
-		f = pro_new;
-		awaited.enque(f);
-	}
-	else
-	{
-		f = read(val, rd);
-		await f?;
+	f = read(val, rd);
+	if (rd < wrt) {
 		Maybe<Int> v = f.get;
 		if (v != Nothing) 
 			rd = rd+1;
 	}
-  return f;
-}
-
-Unit yield(Int x) {
-	this.yield_(Just(x));
-}
-
-Unit yield_(Maybe<Int> x) // successful or not
-{
-  Bool isEmpt = awaited.isEmpty_();
-	if (isEmpt) { //simple write
-		Fut<Maybe<Int>> f = read(val, wrt);
-		f.pro_give(x);
-		wrt = wrt + 1; // circular
- 	}
 	else
-	{	// destructive write to awaited empty buffer 
-		Fut<Maybe<Int>> p = awaited.deque();
-		p.pro_give(x);
-	}
-}
+		rd = rd+1;
+	return f;
+  }
 
-Unit terminate() {
-  Bool isEmpt = awaited.isEmpty_();
-	while(!isEmpt){
-		Fut<Maybe<Int>> p = awaited.deque();
-		p.pro_give(Nothing);
-	}
+  Unit yield(Int x) {
+	this.yield_(Just(x));
+  }
 
+  Unit yield_(Maybe<Int> x) // successful or not
+  {
+	Fut<Maybe<Int>> f = read(val, wrt);
+	f.pro_give(x);
+	wrt = wrt + 1;
+  }
+
+  Unit terminate() {
+	while(rd > wrt){// in case read faster than write
+		Fut<Maybe<Int>> f = read(val, wrt);
+		f.pro_give(Nothing);
+		wrt = wrt + 1;
+	}
 	Fut<Maybe<Int>> f = read(val, wrt);
 	f.pro_give(Nothing);
-	wrt = wrt + 1; // circular
+	wrt = wrt + 1;
+  }
 }
-}
+
 
 
 
