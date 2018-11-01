@@ -23,29 +23,16 @@ fimport diffTimeSpec from System.Clock;
 fimport Clock from System.Clock;
 fimport TimeSpec from System.Clock;
 
-fimport quot from Prelude;
-fimport rem from Prelude;
-
-// faster integral-only division
-def Int div(Int n, Int d) = quot(n,d);
-
-// faster integral-only modulo
-def Int mod(Int n, Int d) = rem(n,d);
-
 def Int workers() = unsafePerformIO(getNumCapabilities()); 
 
-// this function is just an alias to an imported function, so it can be automatically lifted & used in the imperative world.
-def TimeSpec diff(TimeSpec a, TimeSpec b) = diffTimeSpec(a,b); 
-
-
 // a class with a streaming method stream(...) which is remotely called
-// The method returns the stream and delegates populatin it to m()
+// The method returns the stream and delegates populating it to m()
 interface ICallee {
   Stream stream(Bool isDestr);
 }
 class Callee implements ICallee{
-// concrete use of a type, say, Int
-Stream stream(Bool isDestr){
+  // concrete use of a type, say, Int
+  Stream stream(Bool isDestr){
 	Buffer b = new Cbuffer();
 	this!m(b);
 	Stream temp;
@@ -54,12 +41,12 @@ Stream stream(Bool isDestr){
 	else
 		temp = new NDref(b, 0);
 	return temp;
-}
+  }
 
-Unit m(Buffer b) 
+  Unit m(Buffer b) 
   {
 	Int i = 1;
-	while(i <= 1000000) {
+	while(i <= bufSize()) {
 		b!yield(i);
 		i = i+1;
 	}
@@ -99,10 +86,10 @@ class Process implements IProcess {
 	while(last){
 		Fut<Maybe<Int>> fv = s!pull();
 		v = fv.get;
-			case (v)  {
+		case (v)  {
 			Just(x) => {b!yield(x*2);}
 			Nothing => {last = False;}
-			}
+		}
 	}
 	b!terminate();
   }
